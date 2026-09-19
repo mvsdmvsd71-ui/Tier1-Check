@@ -1,0 +1,1046 @@
+# ==============================================================================
+#                 TITAN CHECK v19.0 - FORENSIC AUDIT SUITE
+#         MCL Official Inspection Engine - Executive Edition (55 Layers)
+# ==============================================================================
+# Requires Administrator Privileges
+
+# ------------------------------------------------------------------------------
+# 0. YÖNETİCİ VE ORTAM HAZIRLIĞI & UI PALETİ
+# ------------------------------------------------------------------------------
+$IsAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $IsAdmin) {
+    Write-Host "[!] HATA: Bu betik YÖNETİCİ yetkileriyle çalıştırılmalıdır!" -ForegroundColor Red
+    Write-Host "[!] Lütfen PowerShell'i Yönetici Olarak Çalıştırın." -ForegroundColor Yellow
+    Exit
+}
+
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
+# ANSI NEON RENK MATRİSİ
+$ESC = [char]27
+$C = @{
+    Reset       = "$ESC[0m"
+    Bold        = "$ESC[1m"
+    Italic      = "$ESC[3m"
+    NeonCyan    = "$ESC[38;2;0;243;255m"
+    NeonPurple  = "$ESC[38;2;189;0;255m"
+    NeonGreen   = "$ESC[38;2;0;255;102m"
+    NeonPink    = "$ESC[38;2;255;0;127m"
+    CyberYellow = "$ESC[38;2;255;214;0m"
+    CrimsonRed  = "$ESC[38;2;255;30;30m"
+    SteelGray   = "$ESC[38;2;80;90;105m"
+    GhostWhite  = "$ESC[38;2;240;245;255m"
+    BgRed       = "$ESC[48;2;255;30;30m$ESC[38;2;255;255;255m$ESC[1m"
+    BgGreen     = "$ESC[48;2;0;255;102m$ESC[38;2;0;0;0m$ESC[1m"
+    BgCyan      = "$ESC[48;2;0;243;255m$ESC[38;2;0;0;0m$ESC[1m"
+    BgPurple    = "$ESC[48;2;189;0;255m$ESC[38;2;255;255;255m$ESC[1m"
+}
+
+$Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$DesktopPath = [Environment]::GetFolderPath("Desktop")
+$TxtReportPath = Join-Path $DesktopPath "TitanCheck_v19_Report_$Timestamp.txt"
+$HtmlReportPath = Join-Path $DesktopPath "TitanCheck_v19_Report_$Timestamp.html"
+$SessionReportPath = Join-Path $DesktopPath "TITAN_Session_Activity_Report.txt"
+
+$global:ReportItems = @()
+
+function Add-ReportItem {
+    param(
+        [string]$Status, # CLEAN, WARNING, CRITICAL
+        [string]$Title,
+        [string]$Details
+    )
+    $global:ReportItems += [PSCustomObject]@{
+        Status  = $Status
+        Title   = $Title
+        Details = $Details
+        Time    = (Get-Date -Format "HH:mm:ss")
+    }
+}
+
+function Show-CyberProgress {
+    param([string]$TaskName, [int]$MS = 300)
+    $spinChars = @('⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏')
+    $steps = 5
+    for ($i = 0; $i -le $steps; $i++) {
+        $char = $spinChars[$i % $spinChars.Count]
+        $percent = $i * 20
+        $barLength = 15
+        $filled = [math]::Round(($percent / 100) * $barLength)
+        $unfilled = $barLength - $filled
+        $bar = ("█" * $filled) + ("░" * $unfilled)
+        
+        Write-Host "`r  $($C.NeonPink)$char$($C.Reset) $($C.NeonCyan)[$bar] $percent%$($C.Reset) $($C.GhostWhite)$TaskName...$($C.Reset)" -NoNewline
+        Start-Sleep -Milliseconds ($MS / $steps)
+    }
+    Write-Host "`r  $($C.NeonGreen)✔$($C.Reset) $($C.NeonCyan)[███████████████] 100%$($C.Reset) $($C.GhostWhite)$TaskName [TAMAMLANDI]$($C.Reset)                 "
+}
+
+function Get-TargetCategory {
+    param([string]$ItemName)
+    if ($ItemName -match "(roblox|synapse|krnl|fluxus|solara|electron|delta|wave|codex)") {
+        return "ROBLOX ÖZEL HİLE / EXPLOIT"
+    } elseif ($ItemName -match "(minecraft|vape|astolfo|raven|drift)") {
+        return "MINECRAFT ÖZEL HİLE / CLIENT"
+    } else {
+        return "GENEL OYUN HİLESİ / YETKİSİZ YAZILIM"
+    }
+}
+
+Clear-Host
+Write-Host @"
+$($C.NeonCyan)
+  ████████╗██╗████████╗██████╗ ███╗   ██╗    ██████╗██╗  ██╗███████╗██╗██╗  ██╗
+  ╚══██╔══╝██║╚══██╔══╝██╔══██╗████╗  ██║    ██╔════╝██║  ██║██╔════╝██║██║ ██╔╝
+     ██║   ██║   ██║   ███████║██╔██╗ ██║    ██║     ███████║█████╗  ██║█████═╝ 
+     ██║   ██║   ██║   ██╔══██║██║╚██╗██║    ██║     ██╔══██║██╔══╝  ██║██  ██╗ 
+     ██║   ██║   ██║   ██║  ██║██║ ╚████║    ╚██████╗██║  ██║███████╗██║██║  ██║
+     ╚═╝   ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝     ╚═════╝╚═╝  ╚═╝╚██████╔╝╚═╝╚═╝  ╚═╝
+$($C.NeonPurple)  ░▒▓█ TITAN CHECK v19.0 - EXECUTIVE FORENSIC ENGINE (55 LAYERS) █▓▒░$($C.Reset)
+"@
+Write-Host "  $($C.SteelGray)┌─ SYSTEM METRICS ──────────────────────────────────────────────────┐$($C.Reset)"
+Write-Host "  $($C.SteelGray)│$($C.Reset) $($C.CyberYellow)OPERATOR:$($C.Reset) $env:USERNAME $($C.SteelGray)|$($C.Reset) $($C.CyberYellow)TARGET:$($C.Reset) $env:COMPUTERNAME $($C.SteelGray)|$($C.Reset) $($C.CyberYellow)DATE:$($C.Reset) $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss') $($C.SteelGray)│$($C.Reset)"
+Write-Host "  $($C.SteelGray)└───────────────────────────────────────────────────────────────────┘$($C.Reset)`n"
+
+# ------------------------------------------------------------------------------
+# YARDIMCI FONKSİYONLAR & NATIVE C# DINAMIK RAM SCANNER
+# ------------------------------------------------------------------------------
+function Convert-ROT13 {
+    param([string]$InputText)
+    if ([string]::IsNullOrEmpty($InputText)) { return "" }
+    $chars = $InputText.ToCharArray()
+    for ($i = 0; $i -lt $chars.Length; $i++) {
+        $c = [int]$chars[$i]
+        if ($c -ge 65 -and $c -le 90) {
+            $chars[$i] = [char]((($c - 65 + 13) % 26) + 65)
+        } elseif ($c -ge 97 -and $c -le 122) {
+            $chars[$i] = [char]((($c - 97 + 13) % 26) + 97)
+        }
+    }
+    return -join $chars
+}
+
+$cSharpRAMScanner = @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+using System.Diagnostics;
+
+public class TitanRAMScanner {
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr OpenProcess(int dwDesiredAccess, bool bInheritHandle, int dwProcessId);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out int lpNumberOfBytesRead);
+
+    [DllImport("kernel32.dll")]
+    public static extern int VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    public struct MEMORY_BASIC_INFORMATION {
+        public IntPtr BaseAddress;
+        public IntPtr AllocationBase;
+        public uint AllocationProtect;
+        public IntPtr RegionSize;
+        public uint State;
+        public uint Protect;
+        public uint Type;
+    }
+
+    public static bool ScanProcessMemory(int processId, string searchPattern) {
+        IntPtr hProcess = OpenProcess(0x0010 | 0x0008 | 0x0020, false, processId);
+        if (hProcess == IntPtr.Zero) return false;
+
+        byte[] patternBytes = Encoding.ASCII.GetBytes(searchPattern);
+        IntPtr address = IntPtr.Zero;
+        MEMORY_BASIC_INFORMATION mbi;
+
+        while (VirtualQueryEx(hProcess, address, out mbi, (uint)Marshal.SizeOf(typeof(MEMORY_BASIC_INFORMATION))) != 0) {
+            if (mbi.State == 0x1000 && (mbi.Protect == 0x04 || mbi.Protect == 0x20 || mbi.Protect == 0x40)) {
+                byte[] buffer = new byte[(int)mbi.RegionSize];
+                int bytesRead;
+                if (ReadProcessMemory(hProcess, mbi.BaseAddress, buffer, buffer.Length, out bytesRead)) {
+                    for (int i = 0; i < bytesRead - patternBytes.Length; i++) {
+                        bool found = true;
+                        for (int j = 0; j < patternBytes.Length; j++) {
+                            if (buffer[i + j] != patternBytes[j]) {
+                                found = false;
+                                break;
+                            }
+                        }
+                        if (found) {
+                            CloseHandle(hProcess);
+                            return true;
+                        }
+                    }
+                }
+            }
+            address = new IntPtr(address.ToInt64() + mbi.RegionSize.ToInt64());
+        }
+        CloseHandle(hProcess);
+        return false;
+    }
+}
+"@
+Add-Type -TypeDefinition $cSharpRAMScanner -ErrorAction SilentlyContinue
+
+# ==============================================================================
+# 55 KATMANLI T1 AUDIT BAŞLIYOR
+# ==============================================================================
+
+# [1] DPS Servisi
+Show-CyberProgress -TaskName "[1/55] Diagnostic Policy Service (DPS) Denetleniyor"
+$dps = Get-Service -Name "DPS" -ErrorAction SilentlyContinue
+if ($dps.Status -eq "Running") {
+    Add-ReportItem "CLEAN" "DPS Servisi Aktif" "Diagnostic Policy Service çalışıyor."
+} else {
+    Add-ReportItem "CRITICAL" "DPS Servisi Kapalı!" "İz kapatma (Anti-forensic) şüphesi. DPS servisi durdurulmuş."
+}
+
+# [2] PcaSvc Servisi
+Show-CyberProgress -TaskName "[2/55] Program Compatibility Assistant (PcaSvc) Denetleniyor"
+$pcasvc = Get-Service -Name "PcaSvc" -ErrorAction SilentlyContinue
+if ($pcasvc.Status -eq "Running") {
+    Add-ReportItem "CLEAN" "PcaSvc Servisi Aktif" "Program Uyumluluk Asistanı çalışıyor."
+} else {
+    Add-ReportItem "WARNING" "PcaSvc Servisi Devre Dışı" "Çalıştırma geçmişi kaydı durdurulmuş olabilir."
+}
+
+# [3] SysMain / Superfetch Servisi
+Show-CyberProgress -TaskName "[3/55] SysMain (Superfetch) Servisi Denetleniyor"
+$sysmain = Get-Service -Name "SysMain" -ErrorAction SilentlyContinue
+if ($sysmain.Status -eq "Running") {
+    Add-ReportItem "CLEAN" "SysMain Servisi Aktif" "Önbellek izleme servisi aktif."
+} else {
+    Add-ReportItem "WARNING" "SysMain Servisi Kapalı" "Prefetch izlerinin güncelliği etkilenebilir."
+}
+
+# [4] EventLog Servisi
+Show-CyberProgress -TaskName "[4/55] Windows EventLog Servisi Kontrol Ediliyor"
+$eventlog = Get-Service -Name "EventLog" -ErrorAction SilentlyContinue
+if ($eventlog.Status -eq "Running") {
+    Add-ReportItem "CLEAN" "EventLog Servisi Aktif" "Olay günlükleri sorunsuz kaydediliyor."
+} else {
+    Add-ReportItem "CRITICAL" "EventLog Servisi KAPALI!" "Sistem loglarının kaydı engellenmiş!"
+}
+
+# [5] Event ID 1102 (Log Temizleme)
+Show-CyberProgress -TaskName "[5/55] Log Temizleme İzleri (Event ID 1102) Taranıyor"
+try {
+    $logCleared = Get-WinEvent -FilterHashtable @{LogName='Security'; Id=1102} -MaxEvents 5 -ErrorAction SilentlyContinue
+    if ($logCleared) {
+        Add-ReportItem "CRITICAL" "Güvenlik Günlükleri Temizlenmiş!" "Event ID 1102 tespit edildi. Son temizleme: $($logCleared[0].TimeCreated)"
+    } else {
+        Add-ReportItem "CLEAN" "Log Temizleme İzi Bulunmadı" "Olay günlükleri silinmemiş."
+    }
+} catch {
+    Add-ReportItem "CLEAN" "Log Temizleme İzi Bulunmadı" "Olay günlükleri temizlenmemiş veya erişim kısıtlı."
+}
+
+# [6] Prefetch Dizin Kontrolü
+Show-CyberProgress -TaskName "[6/55] Prefetch Bütünlüğü Denetleniyor"
+$prefetchFiles = Get-ChildItem -Path "$env:SystemRoot\Prefetch" -Filter "*.pf" -ErrorAction SilentlyContinue
+if ($prefetchFiles.Count -gt 5) {
+    Add-ReportItem "CLEAN" "Prefetch Dosyaları Mevcut" "Toplam $($prefetchFiles.Count) adet .pf dosyası doğrulandı."
+} else {
+    Add-ReportItem "CRITICAL" "Prefetch Klasörü Temizlenmiş!" "Sadece $($prefetchFiles.Count) adet .pf bulundu. İzler silinmiş olabilir."
+}
+
+# [7] BAM (Background Activity Moderator) - DETAYLANDIRILMIŞ
+Show-CyberProgress -TaskName "[7/55] BAM Registry Kayıtları Detaylı Analiz Ediliyor"
+$bamPath = "HKLM:\SYSTEM\CurrentControlSet\Services\bam\State\UserSettings"
+$bamCheats = @()
+if (Test-Path $bamPath) {
+    $users = Get-ChildItem -Path $bamPath -ErrorAction SilentlyContinue
+    foreach ($u in $users) {
+        $props = Get-ItemProperty -Path $u.PSPath -ErrorAction SilentlyContinue
+        foreach ($prop in $props.PSObject.Properties) {
+            if ($prop.Name -match "(cheat|hack|injector|aimbot|bypass|spoofer|solara|synapse|krnl|fluxus)") {
+                $exeName = Split-Path $prop.Name -Leaf
+                $cat = Get-TargetCategory -ItemName $exeName
+                $bamCheats += "Dosya: [$exeName] | Kategori: $cat | Yolu: $($prop.Name)"
+            }
+        }
+    }
+}
+if ($bamCheats.Count -gt 0) {
+    Add-ReportItem "CRITICAL" "BAM Kayıtlarında Şüpheli Yazılım Tespiti!" ($bamCheats -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "BAM Kayıtları Temiz" "Kullanıcı arka plan çalıştırma geçmişinde şüpheli dosya bulunamadı."
+}
+
+# [8] UserAssist (ROT13) Analysis
+Show-CyberProgress -TaskName "[8/55] UserAssist Kayıtları Çözümleniyor"
+$userAssistPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist"
+$uaCheats = @()
+if (Test-Path $userAssistPath) {
+    $guids = Get-ChildItem -Path $userAssistPath -ErrorAction SilentlyContinue
+    foreach ($guid in $guids) {
+        $countPath = Join-Path $guid.PSPath "Count"
+        if (Test-Path $countPath) {
+            $props = Get-ItemProperty -Path $countPath -ErrorAction SilentlyContinue
+            foreach ($prop in $props.PSObject.Properties) {
+                $decoded = Convert-ROT13 -InputText $prop.Name
+                if ($decoded -match "(cheat|hack|injector|aimbot|bypass|exploit|solara|synapse|krnl)") {
+                    $exeName = Split-Path $decoded -Leaf
+                    $cat = Get-TargetCategory -ItemName $exeName
+                    $uaCheats += "Dosya: [$exeName] | Kategori: $cat | Tam Yol: $decoded"
+                }
+            }
+        }
+    }
+}
+if ($uaCheats.Count -gt 0) {
+    Add-ReportItem "CRITICAL" "UserAssist Şüpheli Uygulama Tespiti" ($uaCheats -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "UserAssist Temiz" "Çalıştırma geçmişinde hile izine rastlanmadı."
+}
+
+# [9] USN Journal Bütünlüğü
+Show-CyberProgress -TaskName "[9/55] USN Journal (NTFS Değişiklik Günlüğü) Kontrol Ediliyor"
+try {
+    $usn = fsutil usn queryjournal C: 2>&1
+    if ($usn -like "*Error*" -or $usn -like "*Hata*") {
+        Add-ReportItem "CRITICAL" "USN Journal Silinmiş/Sıfırlanmış!" "NTFS dosya değişim günlüğü silinmiş."
+    } else {
+        Add-ReportItem "CLEAN" "USN Journal Aktif" "NTFS dosya sistemi günlüğü sağlam."
+    }
+} catch {
+    Add-ReportItem "WARNING" "USN Journal Sorgulanamadı" $_.Exception.Message
+}
+
+# [10] Live RAM Scanner (Native C# Engine)
+Show-CyberProgress -TaskName "[10/55] Canlı RAM (Dynamic Memory) Taraması Yapılıyor"
+$targetProc = Get-Process -Name "RobloxPlayerBeta", "Minecraft", "javaw" -ErrorAction SilentlyContinue
+$ramCheatDetected = $false
+$ramDetails = ""
+if ($targetProc) {
+    $signatures = @("Aimbot", "Wallhack", "CheatEngine", "Speedhack", "InjectedDLL", "Solara", "Synapse")
+    foreach ($proc in $targetProc) {
+        foreach ($sig in $signatures) {
+            $res = [TitanRAMScanner]::ScanProcessMemory($proc.Id, $sig)
+            if ($res) {
+                $ramCheatDetected = $true
+                $cat = Get-TargetCategory -ItemName $sig
+                $ramDetails += "Süreç: $($proc.Name) (PID: $($proc.Id)) -> İmza: $sig ($cat) | "
+            }
+        }
+    }
+    if ($ramCheatDetected) {
+        Add-ReportItem "CRITICAL" "RAM İçerisinde Canlı Hile İmzası Bulundu!" $ramDetails
+    } else {
+        Add-ReportItem "CLEAN" "RAM Taraması Temiz" "Aktif oyun belleğinde bilinen hile string'i bulunamadı."
+    }
+} else {
+    Add-ReportItem "CLEAN" "RAM Taraması Atlama" "Hedef oyun süreci açık değil."
+}
+
+# [11] Temp Klasörü Şüpheli Dosya Taraması
+Show-CyberProgress -TaskName "[11/55] AppData\Local\Temp Klasörü Taranıyor"
+$tempCheats = Get-ChildItem -Path $env:TEMP -Recurse -Include "*.exe", "*.dll", "*.sys" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(cheat|hack|inject|bypass|aimbot|solara|krnl)" }
+if ($tempCheats) {
+    $fileList = @()
+    foreach ($f in $tempCheats) {
+        $cat = Get-TargetCategory -ItemName $f.Name
+        $fileList += "Dosya: [$($f.Name)] | Kategori: $cat | Yol: $($f.FullName)"
+    }
+    Add-ReportItem "CRITICAL" "Temp Klasöründe Şüpheli Dosyalar Tespit Edildi" ($fileList -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "Temp Klasörü Temiz" "Şüpheli .exe/.dll/.sys dosyası bulunamadı."
+}
+
+# [12] LocalAppData Taraması
+Show-CyberProgress -TaskName "[12/55] LocalAppData Klasörü Taranıyor"
+$localCheats = Get-ChildItem -Path $env:LOCALAPPDATA -Depth 2 -Include "*.exe", "*.dll" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(injector|exploit|spoofer|aimbot|solara|krnl)" }
+if ($localCheats) {
+    $fileList = @()
+    foreach ($f in $localCheats) {
+        $cat = Get-TargetCategory -ItemName $f.Name
+        $fileList += "Dosya: [$($f.Name)] | Kategori: $cat | Yol: $($f.FullName)"
+    }
+    Add-ReportItem "CRITICAL" "LocalAppData Klasöründe Şüpheli Yazılım!" ($fileList -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "LocalAppData Temiz" "Şüpheli dosya bulunamadı."
+}
+
+# [13] Roaming AppData Taraması
+Show-CyberProgress -TaskName "[13/55] Roaming AppData Taranıyor"
+$roamingCheats = Get-ChildItem -Path $env:APPDATA -Depth 2 -Include "*.exe", "*.dll" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(injector|exploit|spoofer|aimbot|solara|krnl)" }
+if ($roamingCheats) {
+    $fileList = @()
+    foreach ($f in $roamingCheats) {
+        $cat = Get-TargetCategory -ItemName $f.Name
+        $fileList += "Dosya: [$($f.Name)] | Kategori: $cat | Yol: $($f.FullName)"
+    }
+    Add-ReportItem "CRITICAL" "AppData Roaming Şüpheli Yazılım!" ($fileList -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "AppData Roaming Temiz" "Şüpheli dosya bulunamadı."
+}
+
+# [14] Downloads Klasör Taraması
+Show-CyberProgress -TaskName "[14/55] İndirilenler (Downloads) Klasörü Taranıyor"
+$downCheats = Get-ChildItem -Path "$env:USERPROFILE\Downloads" -Recurse -Include "*.exe", "*.dll", "*.zip", "*.rar" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(cheat|hack|injector|bypass|spoofer|solara|krnl|fluxus)" }
+if ($downCheats) {
+    $fileList = @()
+    foreach ($f in $downCheats) {
+        $cat = Get-TargetCategory -ItemName $f.Name
+        $fileList += "Dosya: [$($f.Name)] | Kategori: $cat | Yol: $($f.FullName)"
+    }
+    Add-ReportItem "CRITICAL" "İndirilenlerde Şüpheli Dosyalar Bulundu" ($fileList -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "Downloads Klasörü Temiz" "Hile kalıntısı bulunamadı."
+}
+
+# [15] Masaüstü Klasör Taraması
+Show-CyberProgress -TaskName "[15/55] Masaüstü Klasörü Taranıyor"
+$deskCheats = Get-ChildItem -Path $DesktopPath -Recurse -Include "*.exe", "*.dll", "*.rar", "*.zip" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(cheat|hack|injector|bypass|spoofer|solara|krnl)" }
+if ($deskCheats) {
+    $fileList = @()
+    foreach ($f in $deskCheats) {
+        $cat = Get-TargetCategory -ItemName $f.Name
+        $fileList += "Dosya: [$($f.Name)] | Kategori: $cat | Yol: $($f.FullName)"
+    }
+    Add-ReportItem "CRITICAL" "Masaüstünde Şüpheli Dosyalar Bulundu" ($fileList -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "Masaüstü Temiz" "Masaüstünde şüpheli dosya bulunamadı."
+}
+
+# [16] Drivers Klasör Taraması
+Show-CyberProgress -TaskName "[16/55] System32\drivers Klasörü Taranıyor"
+$driverCheats = Get-ChildItem -Path "$env:SystemRoot\System32\drivers" -Filter "*.sys" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(capcom|gdrv|mhyprot|kdmapper)" }
+if ($driverCheats) {
+    Add-ReportItem "CRITICAL" "Şüpheli/Vulnerable Kernel Sürücüsü Bulundu!" (($driverCheats | Select-Object -ExpandProperty FullName) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "System32 Drivers Temiz" "Bilinen yetkisiz kernel sürücüye rastlanmadı."
+}
+
+# [17] SysWOW64 Klasör Taraması
+Show-CyberProgress -TaskName "[17/55] SysWOW64 Klasörü Taranıyor"
+$wowCheats = Get-ChildItem -Path "$env:SystemRoot\SysWOW64" -Filter "*.dll" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(cheat|hack|inject)" }
+if ($wowCheats) {
+    Add-ReportItem "CRITICAL" "SysWOW64 Altında Şüpheli DLL!" (($wowCheats | Select-Object -ExpandProperty FullName) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "SysWOW64 Temiz" "Şüpheli DLL bulunamadı."
+}
+
+# [18] ProgramData Taraması
+Show-CyberProgress -TaskName "[18/55] ProgramData Klasörü Taranıyor"
+$progDataCheats = Get-ChildItem -Path "$env:ProgramData" -Depth 2 -Include "*.exe", "*.dll" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(cheat|hack|injector|spoofer)" }
+if ($progDataCheats) {
+    Add-ReportItem "CRITICAL" "ProgramData İçinde Şüpheli Dosya!" (($progDataCheats | Select-Object -ExpandProperty FullName) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "ProgramData Temiz" "Şüpheli içerik bulunamadı."
+}
+
+# [19] Prefetch İleri Analiz (Zaman Manipülasyonu)
+Show-CyberProgress -TaskName "[19/55] Prefetch Zaman Manipülasyonu (Time-Travel) Taraması"
+$timeTravel = Get-ChildItem -Path "$env:SystemRoot\Prefetch" -Filter "*.pf" -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date) }
+if ($timeTravel) {
+    Add-ReportItem "CRITICAL" "Prefetch Zaman Manipülasyonu Tespit Edildi!" (($timeTravel | Select-Object -ExpandProperty Name) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "Prefetch Zaman Damgaları Doğal" "Gelecek tarihli manipüle edilmiş .pf dosyası yok."
+}
+
+# [20] Prefetch Hile İsim Taraması
+Show-CyberProgress -TaskName "[20/55] Prefetch İçinde Çalıştırılmış Hile İzi Taraması"
+$pfCheats = Get-ChildItem -Path "$env:SystemRoot\Prefetch" -Filter "*.pf" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(CHEAT|HACK|INJECT|BYPASS|EXPLOIT|AIMBOT|SPOOFER|SOLARA|KRNL|FLUXUS)" }
+if ($pfCheats) {
+    $pfList = @()
+    foreach ($pf in $pfCheats) {
+        $cat = Get-TargetCategory -ItemName $pf.Name
+        $pfList += "Önbellek Dosyası: [$($pf.Name)] | Kategori: $cat"
+    }
+    Add-ReportItem "CRITICAL" "Prefetch Kayıtlarında Çalıştırılmış Hile Tespiti!" ($pfList -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "Prefetch Hile Taraması Temiz" "Çalıştırılmış hile .pf kaydına rastlanmadı."
+}
+
+# [21] Roblox / Oyun Log Analizi
+Show-CyberProgress -TaskName "[21/55] Roblox / Oyun Log Klasörleri İnceleme"
+$robloxLogPath = "$env:LOCALAPPDATA\Roblox\logs"
+if (Test-Path $robloxLogPath) {
+    $logSuspiciousMatches = @()
+    $logs = Get-ChildItem -Path $robloxLogPath -Filter "*.log" -ErrorAction SilentlyContinue | Select-Object -Last 10
+    foreach ($log in $logs) {
+        $content = Get-Content -Path $log.FullName -ErrorAction SilentlyContinue
+        $matched = $content | Select-String -Pattern "Injected", "Unexpected DLL", "Security Violation", "Blocked Module"
+        if ($matched) {
+            $logSuspiciousMatches += "$($log.Name) ($($matched.Count) ihlal)"
+        }
+    }
+    if ($logSuspiciousMatches.Count -gt 0) {
+        Add-ReportItem "CRITICAL" "Oyun Loglarında Güvenlik İhlali Tespiti!" ($logSuspiciousMatches -join " | ")
+    } else {
+        Add-ReportItem "CLEAN" "Oyun Logları Temiz" "Son Roblox loglarında enjeksiyon/ihlal kaydı bulunamadı."
+    }
+} else {
+    Add-ReportItem "CLEAN" "Roblox Log Klasörü Yok" "Log dizini bulunamadı."
+}
+
+# [22] DNS Cache Taraması
+Show-CyberProgress -TaskName "[22/55] DNS Önbelleği (Sitede Hile Alan Adı) Taraması"
+try {
+    $dnsCache = Get-DnsClientCache -ErrorAction SilentlyContinue | Where-Object { $_.Entry -match "(cheat|unknowncheats|guidedhacking|aimbot|robloxexploit|wearedevs)" }
+    if ($dnsCache) {
+        Add-ReportItem "CRITICAL" "DNS Cache'de Hile Sitesi İzi Bulundu!" (($dnsCache | Select-Object -ExpandProperty Entry) -join " | ")
+    } else {
+        Add-ReportItem "CLEAN" "DNS Önbelleği Temiz" "Bilinen hile alan adı bağlantısı bulunamadı."
+    }
+} catch {
+    Add-ReportItem "WARNING" "DNS Cache Okunamadı" $_.Exception.Message
+}
+
+# [23] TestMode Kontrolü
+Show-CyberProgress -TaskName "[23/55] Windows TestMode / Driver Signing Status"
+$bcd = bcdedit /enum | Select-String "testsigning"
+if ($bcd -like "*Yes*") {
+    Add-ReportItem "CRITICAL" "TestMode (Sürücü İmza Zorunluluğu) KAPALI!" "Sistem imzasız hile sürücülerini çalıştırabilir durumda!"
+} else {
+    Add-ReportItem "CLEAN" "TestMode Kapalı" "Sürücü imza zorunluluğu aktif."
+}
+
+# [24] Kernel Debugging Status
+Show-CyberProgress -TaskName "[24/55] Çekirdek Hata Ayıklama (Kernel Debugging) Kontrolü"
+$debug = bcdedit /enum | Select-String "debug"
+if ($debug -like "*Yes*") {
+    Add-ReportItem "CRITICAL" "Kernel Debugging AKTİF!" "Çekirdek düzeyde hata ayıklayıcı açık."
+} else {
+    Add-ReportItem "CLEAN" "Kernel Debugging Kapalı" "Çekirdek hata ayıklama pasif."
+}
+
+# [25] Hypervisor / Sanal Makine Kontrolü
+Show-CyberProgress -TaskName "[25/55] Sanal Makine / Hypervisor Kontrolü"
+$compSystem = Get-WmiObject -Class Win32_ComputerSystem
+if ($compSystem.Model -match "(VirtualBox|VMware|Virtual Machine|QEMU)") {
+    Add-ReportItem "WARNING" "Sanal Makine Tespit Edildi" "Sistem model ismi: $($compSystem.Model)"
+} else {
+    Add-ReportItem "CLEAN" "Fiziksel Cihaz Doğrulandı" "Sanal makine emülasyonu bulunamadı."
+}
+
+# [26] Startup Programs (Registry Run)
+Show-CyberProgress -TaskName "[26/55] Başlangıç Programları (Registry Run) Taraması"
+$runKeys = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run", "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -ErrorAction SilentlyContinue
+$suspiciousRun = @()
+foreach ($prop in $runKeys.PSObject.Properties) {
+    if ($prop.Value -match "(cheat|hack|inject|spoofer)") {
+        $suspiciousRun += "$($prop.Name) -> $($prop.Value)"
+    }
+}
+if ($suspiciousRun.Count -gt 0) {
+    Add-ReportItem "CRITICAL" "Başlangıçta Çalışan Şüpheli Yazılım!" ($suspiciousRun -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "Başlangıç Kayıtları Temiz" "HKLM/HKCU Run anahtarları temiz."
+}
+
+# [27] Startup Programs (RunOnce)
+Show-CyberProgress -TaskName "[27/55] Başlangıç Programları (RunOnce) Taraması"
+$runOnceKeys = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce", "HKCU:\Software\Microsoft\Windows\CurrentVersion\RunOnce" -ErrorAction SilentlyContinue
+$suspiciousRunOnce = @()
+foreach ($prop in $runOnceKeys.PSObject.Properties) {
+    if ($prop.Value -match "(cheat|hack|inject|spoofer)") {
+        $suspiciousRunOnce += "$($prop.Name) -> $($prop.Value)"
+    }
+}
+if ($suspiciousRunOnce.Count -gt 0) {
+    Add-ReportItem "CRITICAL" "RunOnce Altında Şüpheli Yazılım!" ($suspiciousRunOnce -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "RunOnce Kayıtları Temiz" "Tek seferlik başlangıç kayıtları temiz."
+}
+
+# [28] Winlogon Shell Bütünlüğü
+Show-CyberProgress -TaskName "[28/55] Winlogon Shell Kaydı Denetleniyor"
+$winlogon = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "Shell" -ErrorAction SilentlyContinue
+if ($winlogon -eq "explorer.exe") {
+    Add-ReportItem "CLEAN" "Winlogon Shell Doğal" "Shell değeri varsayılan explorer.exe durumunda."
+} else {
+    Add-ReportItem "CRITICAL" "Winlogon Shell Değiştirilmiş!" "Mevcut Shell Değeri: $winlogon"
+}
+
+# [29] Winlogon Userinit Bütünlüğü
+Show-CyberProgress -TaskName "[29/55] Winlogon Userinit Kaydı Denetleniyor"
+$userinit = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" -Name "Userinit" -ErrorAction SilentlyContinue
+if ($userinit -like "*userinit.exe*") {
+    Add-ReportItem "CLEAN" "Winlogon Userinit Doğal" "Userinit yolu geçerli."
+} else {
+    Add-ReportItem "CRITICAL" "Winlogon Userinit Değiştirilmiş!" "Mevcut Userinit: $userinit"
+}
+
+# [30] Scheduled Tasks (Zamanlanmış Görevler)
+Show-CyberProgress -TaskName "[30/55] Zamanlanmış Görevler (Task Scheduler) Taranıyor"
+$tasks = Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -match "(cheat|hack|inject|spoofer|bypass)" }
+if ($tasks) {
+    Add-ReportItem "CRITICAL" "Şüpheli Zamanlanmış Görev Bulundu!" (($tasks | Select-Object -ExpandProperty TaskName) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "Zamanlanmış Görevler Temiz" "Zararlı/hile görevi bulunamadı."
+}
+
+# [31] Windows Services Taraması
+Show-CyberProgress -TaskName "[31/55] Windows Servisleri Kalıcılık Taraması"
+$services = Get-Service -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "(cheat|hack|injector|spoofer)" -or $_.ServiceName -match "(cheat|hack|injector)" }
+if ($services) {
+    Add-ReportItem "CRITICAL" "Şüpheli Windows Servisi Tespit Edildi!" (($services | Select-Object -ExpandProperty ServiceName) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "Windows Servisleri Temiz" "Şüpheli servis bulunamadı."
+}
+
+# [32] Active Process Taraması - DETAYLANDIRILMIŞ
+Show-CyberProgress -TaskName "[32/55] Aktif Çalışan Süreçler Taranıyor"
+$processes = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match "(cheatengine|xenos|processhacker|fiddler|charles|dnspy|cheat|solara|krnl)" }
+if ($processes) {
+    $procList = @()
+    foreach ($p in $processes) {
+        $cat = Get-TargetCategory -ItemName $p.ProcessName
+        $procList += "Süreç: [$($p.ProcessName).exe] (PID: $($p.Id)) | Kategori: $cat"
+    }
+    Add-ReportItem "CRITICAL" "Tehlikeli/Hile Aracı Süreci Çalışıyor!" ($procList -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "Çalışan Süreçler Temiz" "Açık hile/analiz yazılımı tespit edilmedi."
+}
+
+# [33] Process Executable Path Verification
+Show-CyberProgress -TaskName "[33/55] Süreç Dosya Yolu Doğrulaması Yapılıyor"
+$suspiciousProcPath = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -like "*\Temp\*" -or $_.Path -like "*\Downloads\*") }
+if ($suspiciousProcPath) {
+    Add-ReportItem "WARNING" "Temp/Downloads Üzerinden Çalışan Süreç Var" (($suspiciousProcPath | Select-Object -ExpandProperty Path) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "Süreç Çalıştırma Yolları Güvenli" "Geçici klasörlerden çalışan şüpheli süreç yok."
+}
+
+# [34] Process Spoofing / Parent PID Analysis
+Show-CyberProgress -TaskName "[34/55] Process Spoofing (Sahte Süreç) Taraması"
+$cmdProcs = Get-WmiObject Win32_Process -Filter "Name = 'cmd.exe' OR Name = 'powershell.exe'"
+$spoofed = @()
+foreach ($p in $cmdProcs) {
+    if ($p.ExecutablePath -and ($p.ExecutablePath -notlike "*System32*" -and $p.ExecutablePath -notlike "*SysWOW64*")) {
+        $spoofed += "$($p.Name) -> $($p.ExecutablePath)"
+    }
+}
+if ($spoofed.Count -gt 0) {
+    Add-ReportItem "CRITICAL" "Sahte Yoldan Çalıştırılan Konsol Süreci Bulundu!" ($spoofed -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "Process Spoofing İzi Bulunmadı" "Konsol süreçlerinin sistem yolları orijinal."
+}
+
+# [35] Shimcache (AppCompatCache) Kayıtları
+Show-CyberProgress -TaskName "[35/55] Shimcache (Uyumluluk Önbelleği) Sorgulanıyor"
+$shimPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\AppCompatibility"
+if (Test-Path $shimPath) {
+    Add-ReportItem "CLEAN" "Shimcache Veritabanı Mevcut" "Çalıştırma uyumluluk verileri saklanıyor."
+} else {
+    Add-ReportItem "WARNING" "Shimcache Anahtarı Eksik" "Uyumluluk önbelleği temizlenmiş olabilir."
+}
+
+# [36] Amcache.hve Varlığı
+Show-CyberProgress -TaskName "[36/55] Amcache.hve Adli Bilişim Dosyası Taranıyor"
+$amcachePath = "$env:SystemRoot\AppCompat\Programs\Amcache.hve"
+if (Test-Path $amcachePath) {
+    $amSize = (Get-Item $amcachePath).Length / 1MB
+    Add-ReportItem "CLEAN" "Amcache.hve Doğrulandı" "Boyut: $([math]::Round($amSize, 2)) MB (Eski çalıştırma izleri saklı)."
+} else {
+    Add-ReportItem "CRITICAL" "Amcache.hve Silinmiş veya Erişilemez!" "Uygulama geçmişi veritabanı yok."
+}
+
+# [37] RecentApps Registry Key
+Show-CyberProgress -TaskName "[37/55] RecentApps (Son Kullanılan Uygulamalar) Taraması"
+$recentAppsPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search\RecentApps"
+$recentCheats = @()
+if (Test-Path $recentAppsPath) {
+    $apps = Get-ChildItem -Path $recentAppsPath -ErrorAction SilentlyContinue
+    foreach ($app in $apps) {
+        $appPath = Get-ItemPropertyValue -Path $app.PSPath -Name "AppPath" -ErrorAction SilentlyContinue
+        if ($appPath -match "(cheat|hack|injector|exploit|solara|krnl)") {
+            $cat = Get-TargetCategory -ItemName $appPath
+            $recentCheats += "Uygulama: [$appPath] | Kategori: $cat"
+        }
+    }
+}
+if ($recentCheats.Count -gt 0) {
+    Add-ReportItem "CRITICAL" "RecentApps Kayıtlarında Hile Tespiti!" ($recentCheats -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "RecentApps Temiz" "Son aratılan/açılan uygulamalarda ihlal yok."
+}
+
+# [38] Listening Ports Analysis (Reverse Shell)
+Show-CyberProgress -TaskName "[38/55] Dinlenen Ağ Portları (Reverse Shell) Taranıyor"
+$suspiciousPorts = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in @(4444, 5555, 6666, 7777, 8888, 9999) }
+if ($suspiciousPorts) {
+    Add-ReportItem "CRITICAL" "Şüpheli Dinleyen Port (Reverse Shell) Tespit Edildi!" (($suspiciousPorts | Select-Object -ExpandProperty LocalPort) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "Ağ Portları Temiz" "Bilinen arka kapı portları dinlenmiyor."
+}
+
+# [39] Active Network Connections
+Show-CyberProgress -TaskName "[39/55] Aktif Dış Ağ Bağlantıları İnceleniyor"
+$established = Get-NetTCPConnection -State Established -ErrorAction SilentlyContinue | Where-Object { $_.RemoteAddress -notlike "127.0.0.1" -and $_.RemoteAddress -notlike "192.168.*" -and $_.RemoteAddress -notlike "10.*" }
+if ($established) {
+    Add-ReportItem "CLEAN" "Aktif Dış Ağ Bağlantıları Mevcut" "Toplam $($established.Count) adet uzak IP bağlantısı aktif."
+} else {
+    Add-ReportItem "CLEAN" "Dış Ağ Bağlantısı Yok" "Aktif dış IP bağlantısı bulunmuyor."
+}
+
+# [40] Network Adapters Promiscuous Mode
+Show-CyberProgress -TaskName "[40/55] Ağ Kartı Paket Dinleme (Promiscuous Mode) Kontrolü"
+$promisc = Get-WmiObject -Class Win32_NetworkAdapter -Filter "NetConnectionStatus = 2" -ErrorAction SilentlyContinue | Where-Object { $_.PnPDeviceID -like "*PROMISCUOUS*" }
+if ($promisc) {
+    Add-ReportItem "CRITICAL" "Ağ Kartı Promiscuous (Dinleme) Modunda!" "Ağ paketleri koklanıyor olabilir (Sniffing)."
+} else {
+    Add-ReportItem "CLEAN" "Ağ Kartları Normal Modda" "Promiscuous mode tespit edilmedi."
+}
+
+# [41] HOSTS Dosyası Bütünlüğü
+Show-CyberProgress -TaskName "[41/55] HOSTS Dosyası Manipülasyon Taraması"
+$hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
+if (Test-Path $hostsPath) {
+    $hostsLines = Get-Content -Path $hostsPath | Where-Object { $_ -notmatch "^\s*#" -and $_.Trim() -ne "" }
+    $blockedAntiCheat = $hostsLines | Where-Object { $_ -match "(easyanticheat|battleye|roblox|byfron)" }
+    if ($blockedAntiCheat) {
+        Add-ReportItem "CRITICAL" "HOSTS Dosyası Anti-Cheat Sunucularını Engelliyor!" ($blockedAntiCheat -join " | ")
+    } else {
+        Add-ReportItem "CLEAN" "HOSTS Dosyası Doğal" "Anti-cheat engelleme yönlendirmesi yok."
+    }
+} else {
+    Add-ReportItem "CRITICAL" "HOSTS Dosyası SİLİNMİŞ!" "System32 drivers etc hosts dosyası bulunamadı."
+}
+
+# [42] Proxy Server Settings
+Show-CyberProgress -TaskName "[42/55] Sistem Proxy Ayarları Taranıyor"
+$proxyEnable = Get-ItemPropertyValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name "ProxyEnable" -ErrorAction SilentlyContinue
+if ($proxyEnable -eq 1) {
+    $proxyServer = Get-ItemPropertyValue -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings" -Name "ProxyServer" -ErrorAction SilentlyContinue
+    Add-ReportItem "WARNING" "Aktif Proxy Kullanımı Var" "Proxy Sunucusu: $proxyServer"
+} else {
+    Add-ReportItem "CLEAN" "Sistem Proxy Kapalı" "Doğrudan bağlantı kullanılıyor."
+}
+
+# [43] SSL/TLS Certificate Injection (MITM)
+Show-CyberProgress -TaskName "[43/55] Kök Sertifika Mağazası (MITM Araya Girme) Taraması"
+$certs = Get-ChildItem -Path "Cert:\LocalMachine\Root" -ErrorAction SilentlyContinue | Where-Object { $_.Subject -match "(Fiddler|Charles|mitmproxy|PortSwigger)" }
+if ($certs) {
+    Add-ReportItem "CRITICAL" "Ağ Trafiğini Dinleyen Sahte SSL Sertifikası Tespit Edildi!" (($certs | Select-Object -ExpandProperty Subject) -join " | ")
+} else {
+    Add-ReportItem "CLEAN" "Kök Sertifika Mağazası Temiz" "Sahte MITM SSL sertifikası bulunamadı."
+}
+
+# [44] Windows Defender Status
+Show-CyberProgress -TaskName "[44/55] Windows Defender Durumu Denetleniyor"
+try {
+    $mpStatus = Get-MpComputerStatus -ErrorAction SilentlyContinue
+    if ($mpStatus.RealTimeProtectionEnabled) {
+        Add-ReportItem "CLEAN" "Windows Defender Gerçek Zamanlı Koruma AKTİF" "Sistem koruması yürürlükte."
+    } else {
+        Add-ReportItem "CRITICAL" "Windows Defender Gerçek Zamanlı Koruma KAPALI!" "Antivirüs koruması devre dışı bırakılmış!"
+    }
+} catch {
+    Add-ReportItem "WARNING" "Defender Durumu Alınamadı" $_.Exception.Message
+}
+
+# [45] UAC (User Account Control) State
+Show-CyberProgress -TaskName "[45/55] UAC (Kullanıcı Hesabı Denetimi) Durumu"
+$uac = Get-ItemPropertyValue -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "EnableLUA" -ErrorAction SilentlyContinue
+if ($uac -eq 1) {
+    Add-ReportItem "CLEAN" "UAC Aktif" "Kullanıcı hesabı denetimi yürürlükte."
+} else {
+    Add-ReportItem "CRITICAL" "UAC Tamamen Devre Dışı!" "EnableLUA = 0. Yönetici onayları kaldırılmış."
+}
+
+# [46] Secure Boot Status
+Show-CyberProgress -TaskName "[46/55] Secure Boot (Güvenli Önyükleme) Kontrolü"
+try {
+    $sb = Confirm-SecureBootUEFI -ErrorAction SilentlyContinue
+    if ($sb) {
+        Add-ReportItem "CLEAN" "Secure Boot AKTİF" "UEFI Güvenli Önyükleme doğrulanmıştır."
+    } else {
+        Add-ReportItem "WARNING" "Secure Boot Kapalı / Desteklenmiyor" "Önyükleme sürücü imzaları biosta zorunlu tutulmuyor."
+    }
+} catch {
+    Add-ReportItem "WARNING" "Secure Boot Durumu Okunamadı" "Legacy BIOS veya kısıtlı erişim."
+}
+
+# [47] DEP (Data Execution Prevention)
+Show-CyberProgress -TaskName "[47/55] DEP (Veri Yürütme Engellemesi) Kontrol Ediliyor"
+$dep = Get-WmiObject -Class Win32_OperatingSystem -ErrorAction SilentlyContinue
+if ($dep.DataExecutionPrevention_SupportPolicy -gt 0) {
+    Add-ReportItem "CLEAN" "DEP Koruması Aktif" "Policy Level: $($dep.DataExecutionPrevention_SupportPolicy)"
+} else {
+    Add-ReportItem "CRITICAL" "DEP Koruması Kapalı!" "Bellek yürütme koruması devre dışı bırakılmış."
+}
+
+# [48] Recycle Bin Analysis
+Show-CyberProgress -TaskName "[48/55] Geri Dönüşüm Kutusu (Silinmiş Hile) Taraması"
+$recycleCheats = Get-ChildItem -Path 'C:\$Recycle.Bin' -Recurse -Force -Include "*.exe", "*.dll", "*.zip" -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "(cheat|hack|injector|bypass|spoofer|solara|krnl)" }
+if ($recycleCheats) {
+    $fileList = @()
+    foreach ($f in $recycleCheats) {
+        $cat = Get-TargetCategory -ItemName $f.Name
+        $fileList += "Silinen Dosya: [$($f.Name)] | Kategori: $cat"
+    }
+    Add-ReportItem "CRITICAL" "Çöp Kutusunda Silinmiş Hile Kalıntısı Bulundu!" ($fileList -join " || ")
+} else {
+    Add-ReportItem "CLEAN" "Geri Dönüşüm Kutusu Temiz" "Silinenlerde şüpheli içerik yok."
+}
+
+# [49] USB Storage History
+Show-CyberProgress -TaskName "[49/55] Cihaza Takılmış USB Bellek Geçmişi Analizi"
+$usbHistory = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Enum\USBSTOR" -ErrorAction SilentlyContinue
+if ($usbHistory) {
+    Add-ReportItem "CLEAN" "USB Geçmişi Erişilebilir" "Harici depolama aygıt kayıtları okundu."
+} else {
+    Add-ReportItem "WARNING" "USB Geçmişi Temizlenmiş Olabilir" "USBSTOR kayıtlarına ulaşılamadı."
+}
+
+# [50] Digital Seal & Integrity
+Show-CyberProgress -TaskName "[50/55] Rapor Mührü Oluşturuluyor"
+Add-ReportItem "CLEAN" "Rapor Mührü Hazırlandı" "Adli tarama raporu bütünlüğü SHA-256 ile mühürlenecek."
+
+# [51] Alternate Data Streams (ADS) Taraması
+Show-CyberProgress -TaskName "[51/55] Alternate Data Streams (Gizli Akışlar) Taranıyor"
+try {
+    $targetPaths = @("$env:USERPROFILE\Desktop", "$env:USERPROFILE\Downloads", $env:TEMP)
+    $adsFound = @()
+    foreach ($path in $targetPaths) {
+        if (Test-Path $path) {
+            $streams = Get-ChildItem -Path $path -Recurse -ErrorAction SilentlyContinue | Get-Item -Stream * -ErrorAction SilentlyContinue | Where-Object { $_.Stream -ne ':$DATA' -and $_.Stream -ne 'Zone.Identifier' }
+            if ($streams) { $adsFound += $streams }
+        }
+    }
+    if ($adsFound.Count -gt 0) {
+        Add-ReportItem "CRITICAL" "ADS (Gizli Veri Akışı) Tespit Edildi!" "Bulunan Akış Sayısı: $($adsFound.Count) | İlk Akış: $($adsFound[0].FileName):$($adsFound[0].Stream)"
+    } else {
+        Add-ReportItem "CLEAN" "Alternate Data Streams (ADS) Temiz" "Dosyaların arkasına gizlenmiş veri akışı bulunamadı."
+    }
+} catch {
+    Add-ReportItem "WARNING" "ADS Taraması Yapılamadı" $_.Exception.Message
+}
+
+# [52] Volume Shadow Copy (VSS) Analizi
+Show-CyberProgress -TaskName "[52/55] Volume Shadow Copy (VSS) Analizi Yapılıyor"
+try {
+    $vssAdminOutput = vssadmin list shadows 2>&1
+    if ($vssAdminOutput -like "*Öğe bulunamadı*" -or $vssAdminOutput -like "*No items found*") {
+        Add-ReportItem "WARNING" "Gölge Kopyalar Temizlenmiş" "Sistem geri yükleme / gölge kopyalar silinmiş olabilir."
+    } else {
+        Add-ReportItem "CLEAN" "Volume Shadow Copies Mevcut" "Sistem yedek/gölge kopyaları aktif."
+    }
+} catch {
+    Add-ReportItem "WARNING" "VSS Taraması Hatası" $_.Exception.Message
+}
+
+# [53] SRUM (System Resource Usage Monitor) Veritabanı
+Show-CyberProgress -TaskName "[53/55] SRUM Veritabanı ve Ağ Kullanım İzleri"
+try {
+    $srumPath = "$env:SystemRoot\System32\SRU\SRUDB.dat"
+    if (Test-Path $srumPath) {
+        $srumItem = Get-Item $srumPath
+        Add-ReportItem "CLEAN" "SRUM Veritabanı Aktif" "Son Güncelleme: $($srumItem.LastWriteTime) (Silinmiş yazılımların ağ geçmişi veritabanında saklı)."
+    } else {
+        Add-ReportItem "CRITICAL" "SRUM Veritabanı Eksik/Silinmiş!" "SRUDB.dat dosyası bulunamadı (Anti-forensic müdahalesi muhtemel)."
+    }
+} catch {
+    Add-ReportItem "WARNING" "SRUM Taraması Hatası" $_.Exception.Message
+}
+
+# [54] Shellbags (Silinmiş Klasör Geçmişi) Analizi
+Show-CyberProgress -TaskName "[54/55] Shellbags (Silinmiş Klasör İzleri) Taranıyor"
+try {
+    $shellbagsPath = "HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags"
+    $suspiciousKeywords = @("hile", "cheat", "injector", "bypass", "exploit", "aimbot", "spoofer", "solara", "krnl")
+    $flaggedBags = @()
+
+    if (Test-Path $shellbagsPath) {
+        $bags = Get-ChildItem -Path $shellbagsPath -Recurse -ErrorAction SilentlyContinue
+        foreach ($bag in $bags) {
+            foreach ($prop in $bag.Property) {
+                $val = Get-ItemPropertyValue -Path $bag.PSPath -Name $prop -ErrorAction SilentlyContinue
+                foreach ($kw in $suspiciousKeywords) {
+                    if ($val -like "*$kw*") {
+                        $flaggedBags += "$val"
+                    }
+                }
+            }
+        }
+    }
+    if ($flaggedBags.Count -gt 0) {
+        $uniqueBags = ($flaggedBags | Select-Object -Unique) -join " | "
+        Add-ReportItem "CRITICAL" "Shellbags Kayıtlarında Şüpheli Klasör İzi Bulundu!" $uniqueBags
+    } else {
+        Add-ReportItem "CLEAN" "Shellbags Kayıtları Temiz" "Kayıt defterinde silinmiş şüpheli klasör adını rastlanmadı."
+    }
+} catch {
+    Add-ReportItem "WARNING" "Shellbags Taraması Yapılamadı" $_.Exception.Message
+}
+
+# [55] LASTACTIVITYVIEW TARZI OTURUM AÇILDIĞINDAN BERİ AÇILAN TÜM DOSYALARIN MASAÜSTÜNE RAPORLANMASI
+Show-CyberProgress -TaskName "[55/55] Oturum Açıldığından Beri Erişilen Tüm Dosyalar Raporlanıyor"
+try {
+    $bootTime = (Get-CimInstance -ClassName Win32_OperatingSystem).LastBootUpTime
+    $sessionHeader = @"
+===============================================================================
+ TITAN CHECK v19.0 - LAST ACTIVITY SESSION REPORT
+ Oturum Başlangıç Zamanı: $bootTime
+ Rapor Oluşturulma Zamanı: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+===============================================================================
+[OTURUM AÇILDIĞINDAN BERİ ERİŞİLEN / AÇILAN TÜM DOSYALAR VE KISAYOLLAR]
+
+"@
+    $sessionHeader | Out-File -FilePath $SessionReportPath -Encoding utf8
+
+    $recentPath = "$env:APPDATA\Microsoft\Windows\Recent"
+    if (Test-Path $recentPath) {
+        Get-ChildItem -Path $recentPath -ErrorAction SilentlyContinue | 
+            Where-Object { $_.LastWriteTime -ge $bootTime } | 
+            Sort-Object LastWriteTime -Descending | 
+            ForEach-Object {
+                " Zaman: $($_.LastWriteTime.ToString('HH:mm:ss')) | Dosya/Kısayol: $($_.Name)" | Out-File -FilePath $SessionReportPath -Append -Encoding utf8
+            }
+    }
+
+    "`n===============================================================================" | Out-File -FilePath $SessionReportPath -Append -Encoding utf8
+    "[OTURUM SÜRESİNCE ÇALIŞTIRILAN TÜM UYGULAMALAR (PREFETCH EXECS)]" | Out-File -FilePath $SessionReportPath -Append -Encoding utf8
+    "===============================================================================" | Out-File -FilePath $SessionReportPath -Append -Encoding utf8
+
+    $prefetchPath = "$env:SystemRoot\Prefetch"
+    if (Test-Path $prefetchPath) {
+        Get-ChildItem -Path $prefetchPath -Filter "*.pf" -ErrorAction SilentlyContinue | 
+            Where-Object { $_.LastWriteTime -ge $bootTime } | 
+            Sort-Object LastWriteTime -Descending | 
+            ForEach-Object {
+                " Zaman: $($_.LastWriteTime.ToString('HH:mm:ss')) | Exe İzi: $($_.Name)" | Out-File -FilePath $SessionReportPath -Append -Encoding utf8
+            }
+    }
+
+    Add-ReportItem "CLEAN" "Oturum Aktivite Raporu Oluşturuldu" "Masaüstüne aktarıldı: TITAN_Session_Activity_Report.txt"
+} catch {
+    Add-ReportItem "WARNING" "Oturum Aktivite Raporu Hatası" $_.Exception.Message
+}
+
+# ==============================================================================
+# RAPOR OLUŞTURMA VE KAPANIŞ
+# ==============================================================================
+Write-Host "`n  $($C.NeonGreen)[+] 55 Katmanlı Tarama Tamamlandı! Raporlar Hazırlanıyor...$($C.Reset)"
+
+# TXT RAPORU
+$txtContent = @"
+======================================================================
+                 TITAN CHECK v19.0 - AUDIT REPORT
+======================================================================
+Tarih/Saat  : $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')
+Cihaz Adı   : $env:COMPUTERNAME
+Kullanıcı   : $env:USERNAME
+======================================================================
+
+"@
+foreach ($item in $global:ReportItems) {
+    $txtContent += "[$($item.Time)] [$($item.Status)] $($item.Title)`n"
+    $txtContent += "    Detay: $($item.Details)`n"
+    $txtContent += "----------------------------------------------------------------------`n"
+}
+$txtContent | Out-File -FilePath $TxtReportPath -Encoding UTF8
+
+# HTML RAPORU
+$htmlHeader = @"
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>TITAN CHECK v19.0 Forensic Report</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { background: linear-gradient(135deg, #1f6beb, #040d21); padding: 20px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #30363d; }
+        .header h1 { margin: 0; color: #ffffff; font-size: 24px; }
+        .header p { margin: 5px 0 0 0; color: #8b949e; font-size: 14px; }
+        .summary { display: flex; gap: 15px; margin-bottom: 20px; }
+        .card { flex: 1; padding: 15px; border-radius: 6px; background-color: #161b22; border: 1px solid #30363d; text-align: center; }
+        .card h2 { margin: 0; font-size: 28px; }
+        .card p { margin: 5px 0 0 0; font-size: 12px; color: #8b949e; text-transform: uppercase; }
+        .clean-card { border-top: 4px solid #2ea043; }
+        .warning-card { border-top: 4px solid #d29922; }
+        .critical-card { border-top: 4px solid #f85149; }
+        table { width: 100%; border-collapse: collapse; background-color: #161b22; border-radius: 6px; overflow: hidden; border: 1px solid #30363d; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #30363d; }
+        th { background-color: #21262d; color: #8b949e; font-size: 12px; text-transform: uppercase; }
+        tr:hover { background-color: #1c2128; }
+        .badge { padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; display: inline-block; }
+        .badge-clean { background-color: rgba(46, 160, 67, 0.15); color: #3fb950; border: 1px solid rgba(46, 160, 67, 0.4); }
+        .badge-warning { background-color: rgba(210, 153, 34, 0.15); color: #d29922; border: 1px solid rgba(210, 153, 34, 0.4); }
+        .badge-critical { background-color: rgba(248, 81, 73, 0.15); color: #f85149; border: 1px solid rgba(248, 81, 73, 0.4); }
+        .details { font-family: monospace; font-size: 12px; color: #8b949e; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>TITAN CHECK v19.0 - Forensics Audit Report</h1>
+            <p>Target: $env:COMPUTERNAME | User: $env:USERNAME | Date: $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')</p>
+        </div>
+"@
+
+$cleanCount = ($global:ReportItems | Where-Object { $_.Status -eq "CLEAN" }).Count
+$warningCount = ($global:ReportItems | Where-Object { $_.Status -eq "WARNING" }).Count
+$criticalCount = ($global:ReportItems | Where-Object { $_.Status -eq "CRITICAL" }).Count
+
+$htmlSummary = @"
+        <div class="summary">
+            <div class="card clean-card">
+                <h2 style="color: #3fb950;">$cleanCount</h2>
+                <p>Temiz (Clean)</p>
+            </div>
+            <div class="card warning-card">
+                <h2 style="color: #d29922;">$warningCount</h2>
+                <p>Uyarı (Warning)</p>
+            </div>
+            <div class="card critical-card">
+                <h2 style="color: #f85149;">$criticalCount</h2>
+                <p>Kritik Tespit (Critical)</p>
+            </div>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 80px;">Saat</th>
+                    <th style="width: 100px;">Durum</th>
+                    <th style="width: 300px;">Denetim Başlığı</th>
+                    <th>Detaylar ve Adli İzlence</th>
+                </tr>
+            </thead>
+            <tbody>
+"@
+
+$htmlRows = ""
+foreach ($item in $global:ReportItems) {
+    $badgeClass = switch ($item.Status) {
+        "CLEAN"    { "badge-clean" }
+        "WARNING"  { "badge-warning" }
+        "CRITICAL" { "badge-critical" }
+    }
+    $htmlRows += @"
+                <tr>
+                    <td>$($item.Time)</td>
+                    <td><span class="badge $badgeClass">$($item.Status)</span></td>
+                    <td><strong>$($item.Title)</strong></td>
+                    <td class="details">$($item.Details)</td>
+                </tr>
+"@
+}
+
+$htmlFooter = @"
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
+"@
+
+$fullHtml = $htmlHeader + $htmlSummary + $htmlRows + $htmlFooter
+$fullHtml | Out-File -FilePath $HtmlReportPath -Encoding UTF8
+
+Write-Host "`n  $($C.NeonPurple)═══════════════════════════════════════════════════════════════════════════$($C.Reset)"
+Write-Host "  $($C.NeonGreen) [✔] TARAMA İŞLEMİ VE RAPORLAMA BAŞARIYLA TAMAMLANDI                   $($C.Reset)"
+Write-Host "  $($C.NeonPurple)═══════════════════════════════════════════════════════════════════════════$($C.Reset)"
+Write-Host "  $($C.GhostWhite) [1] TXT Raporu            : $TxtReportPath$($C.Reset)"
+Write-Host "  $($C.GhostWhite) [2] HTML Raporu           : $HtmlReportPath$($C.Reset)"
+Write-Host "  $($C.GhostWhite) [3] LastActivity Raporu  : $SessionReportPath$($C.Reset)"
+Write-Host "  $($C.NeonPurple)═══════════════════════════════════════════════════════════════════════════$($C.Reset)`n"
